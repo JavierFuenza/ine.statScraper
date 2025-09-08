@@ -37,7 +37,7 @@
 El comando principal es:
 
 ```bash
-uv python main.py [opciones]
+uv run python main.py [opciones]
 ```
 
 ### Opciones y flags
