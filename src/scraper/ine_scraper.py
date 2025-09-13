@@ -153,6 +153,59 @@ class INEScraper:
         except Exception as e:
             logger.error(f"Error en debug: {e}")
     
+    async def discover_available_datasets(self, module_name: str) -> List[str]:
+        """Descubrir automáticamente los datasets disponibles en un módulo específico"""
+        logger.info(f"Descubriendo datasets disponibles en módulo: {module_name}")
+        
+        available_datasets = []
+        
+        try:
+            # Expandir el módulo primero
+            if not await self.expand_module_section(module_name):
+                logger.error(f"No se pudo expandir el módulo: {module_name}")
+                return available_datasets
+            
+            # Esperar a que se carguen los datasets
+            await asyncio.sleep(3)
+            
+            # Buscar el elemento del módulo específico para delimitar la búsqueda
+            module_locator = self.page.locator(f"span").filter(has_text=module_name)
+            
+            if await module_locator.count() == 0:
+                logger.error(f"No se encontró el módulo: {module_name}")
+                return available_datasets
+            
+            # Encontrar el contenedor padre del módulo (li element)
+            module_li = module_locator.first.locator("xpath=ancestor::li[contains(@class, 't')]").first
+            
+            if await module_li.count() == 0:
+                logger.error(f"No se encontró el contenedor del módulo: {module_name}")
+                return available_datasets
+            
+            # Buscar SOLO los enlaces de datasets dentro de este módulo específico
+            dataset_links = await module_li.locator("a.ds").all()
+            logger.info(f"Enlaces de datasets encontrados en {module_name}: {len(dataset_links)}")
+            
+            for i, link in enumerate(dataset_links):
+                try:
+                    dataset_text = await link.text_content()
+                    if dataset_text and dataset_text.strip():
+                        clean_text = dataset_text.strip()
+                        if clean_text not in available_datasets:
+                            available_datasets.append(clean_text)
+                            logger.info(f"Dataset descubierto {i+1}: '{clean_text}'")
+                        
+                except Exception as e:
+                    logger.debug(f"Error procesando dataset link {i}: {e}")
+                    continue
+            
+            logger.info(f"Total de datasets descubiertos en {module_name}: {len(available_datasets)}")
+            
+        except Exception as e:
+            logger.error(f"Error descubriendo datasets en {module_name}: {e}")
+        
+        return available_datasets
+
     async def expand_module_section(self, module_name: str):
         """Expandir una sección específica del módulo"""
         logger.info(f"Expandiendo sección: {module_name}")
@@ -270,9 +323,6 @@ class INEScraper:
         logger.info(f"Descargando CSV para: {dataset_name}")
         
         try:
-            # Primero cerrar cualquier modal abierto
-            await self.force_close_all_modals()
-            
             # Buscar el botón de exportar
             export_button = self.page.locator("text=Exportar")
             if await export_button.count() == 0:
@@ -308,31 +358,73 @@ class INEScraper:
                 logger.warning("No se encontró opción CSV, intentando click directo en Exportar")
                 await export_button.click()
             
-            # Esperar a que aparezca el modal
-            logger.info("Esperando que aparezca el modal de exportación...")
-            await asyncio.sleep(3)
+            # Esperar a que aparezca el modal y se cargue el contenido dinámicamente
+            logger.info("Esperando que aparezca el modal de exportación y se cargue el contenido...")
             
-            # ESTRATEGIA 1: Esperar dinámicamente a que aparezca el iframe
-            logger.info("=== ESTRATEGIA 1: Esperando iframe dinámico ===")
+            # Esperar a que aparezca el contenido del diálogo dinámicamente
+            try:
+                await self.page.wait_for_selector("#dialog-content", timeout=10000)
+                logger.info("Modal dialog-content encontrado")
+                
+                # Esperar un poco más para que se cargue el contenido interno
+                await asyncio.sleep(3)
+                
+                # Verificar si hay contenido en el modal
+                dialog_content = await self.page.locator("#dialog-content").text_content()
+                dialog_html = await self.page.locator("#dialog-content").inner_html()
+                logger.info(f"Contenido del modal dialog-content: '{dialog_content[:200]}...' (primeros 200 chars)")
+                logger.info(f"HTML del modal dialog-content: '{dialog_html[:500]}...' (primeros 500 chars)")
+                
+                # También verificar si hay otros modales o dialogs activos
+                all_visible_divs = await self.page.locator("div:visible").all()
+                logger.info(f"Total de divs visibles en la página: {len(all_visible_divs)}")
+                
+                # Buscar cualquier elemento que contenga "Export" o "Descargar"
+                export_elements = await self.page.locator("*:has-text('Export')").all()
+                descargar_elements = await self.page.locator("*:has-text('Descargar')").all()
+                generate_elements = await self.page.locator("*:has-text('Generate')").all()
+                
+                logger.info(f"Elementos con 'Export': {len(export_elements)}")
+                logger.info(f"Elementos con 'Descargar': {len(descargar_elements)}")
+                logger.info(f"Elementos con 'Generate': {len(generate_elements)}")
+                
+                # Si hay elementos con estos textos, mostrar información sobre ellos
+                for i, elem in enumerate(export_elements[:3]):
+                    try:
+                        text = await elem.text_content()
+                        is_visible = await elem.is_visible()
+                        logger.info(f"Export elemento {i+1}: visible={is_visible}, text='{text[:100]}'")
+                    except:
+                        pass
+                
+            except Exception as e:
+                logger.warning(f"No se pudo esperar a dialog-content: {e}")
+                await asyncio.sleep(3)
+            
+            # ESTRATEGIA 1 (PRIORITARIA): Manipulación JavaScript del modal
+            logger.info("=== ESTRATEGIA 1: Manipulación JavaScript (PRIORITARIA) ===")
+            result = await self.try_javascript_download_strategies(dataset_name)
+            if result:
+                logger.info("JavaScript descarga exitosa, cerrando modales...")
+                await self.force_close_all_modals()
+                return result
+            
+            # ESTRATEGIA 2: Esperar dinámicamente a que aparezca el iframe
+            logger.info("=== ESTRATEGIA 2: Esperando iframe dinámico ===")
             iframe_found = await self.wait_for_dynamic_iframe()
             
             if iframe_found:
                 result = await self.handle_iframe_download(iframe_found, dataset_name)
                 if result:
+                    logger.info("Iframe descarga exitosa, cerrando modales...")
                     await self.force_close_all_modals()
                     return result
             
-            # ESTRATEGIA 2: Intentar descarga sin iframe (directa)
-            logger.info("=== ESTRATEGIA 2: Descarga directa sin iframe ===")
+            # ESTRATEGIA 3: Intentar descarga sin iframe (directa)
+            logger.info("=== ESTRATEGIA 3: Descarga directa sin iframe ===")
             result = await self.try_direct_download_strategies(dataset_name)
             if result:
-                await self.force_close_all_modals()
-                return result
-            
-            # ESTRATEGIA 3: Manipulación JavaScript del modal
-            logger.info("=== ESTRATEGIA 3: Manipulación JavaScript ===")
-            result = await self.try_javascript_download_strategies(dataset_name)
-            if result:
+                logger.info("Descarga directa exitosa, cerrando modales...")
                 await self.force_close_all_modals()
                 return result
             
@@ -541,69 +633,152 @@ class INEScraper:
         return None
     
     async def try_javascript_download_strategies(self, dataset_name: str) -> Optional[str]:
-        """Intentar descarga usando JavaScript"""
-        logger.info("Intentando estrategias JavaScript...")
+        """Intentar descarga usando JavaScript - Buscar botón Descargar en modal dialog"""
+        logger.info("Intentando encontrar botón Descargar en modal dialog...")
         
         try:
-            js_strategies = [
-                # Buscar y hacer click en elementos de descarga
-                """
-                const downloadBtn = document.querySelector('input[value*="Descargar"]') || 
-                                   document.querySelector('button:contains("Descargar")') ||
-                                   document.querySelector('*[onclick*="download"]');
-                if (downloadBtn) downloadBtn.click();
-                """,
+            # Basado en las screenshots, el botón Descargar está en un modal dialog, no iframe
+            # Estrategias específicas para encontrar el botón "Descargar"
+            
+            download_selectors = [
+                # Botones específicos dentro del dialog-content dinámico (lo más específico primero)
+                "#dialog-content input[value='Descargar']",
+                "#dialog-content button:has-text('Descargar')",
+                "#dialog-content input[value*='Descargar']",
+                "#dialog-content input[type='button']",
+                "#dialog-content button[type='button']",
+                "#dialog-content input[type='submit']",
+                "#dialog-content button",
                 
-                # Enviar formularios que puedan existir
+                # Botones dentro de modales jQuery UI
+                ".ui-dialog input[value*='Descargar']",
+                ".ui-dialog button:has-text('Descargar')",
+                ".ui-dialog input[type='button']",
+                ".ui-dialog button[type='button']",
+                
+                # Botones generales con texto "Descargar"
+                "input[value='Descargar']",
+                "button:has-text('Descargar')",
+                "input[value*='Descargar']",
+                
+                # Fallback - cualquier botón visible
+                "input[type='button']:visible",
+                "button:visible"
+            ]
+            
+            for i, selector in enumerate(download_selectors):
+                try:
+                    logger.info(f"Probando selector {i+1}/{len(download_selectors)}: {selector}")
+                    
+                    # Buscar elementos con este selector
+                    elements = await self.page.locator(selector).all()
+                    logger.info(f"Encontrados {len(elements)} elementos con selector: {selector}")
+                    
+                    for j, element in enumerate(elements):
+                        try:
+                            # Verificar si el elemento es visible y habilitado
+                            if await element.is_visible() and await element.is_enabled():
+                                text_content = await element.text_content() or ""
+                                input_value = await element.get_attribute("value") or ""
+                                logger.info(f"Elemento {j+1}: text='{text_content}', value='{input_value}', visible=True, enabled=True")
+                                
+                                # Intentar hacer click y descargar
+                                async with self.page.expect_download(timeout=10000) as download_info:
+                                    await element.click()
+                                    logger.info(f"Haciendo click en elemento: {selector}[{j}]")
+                                    await asyncio.sleep(2)
+                                    
+                                    download = await download_info.value
+                                    logger.info(f"¡Descarga exitosa con selector {selector}!")
+                                    return await self.save_download(download, dataset_name)
+                            else:
+                                text_content = await element.text_content() or ""
+                                input_value = await element.get_attribute("value") or ""
+                                is_visible = await element.is_visible()
+                                is_enabled = await element.is_enabled()
+                                logger.debug(f"Elemento {j+1} no clickeable: text='{text_content}', value='{input_value}', visible={is_visible}, enabled={is_enabled}")
+                                
+                        except Exception as e:
+                            logger.debug(f"Error con elemento {j+1} del selector {selector}: {e}")
+                            continue
+                            
+                except Exception as e:
+                    logger.debug(f"Error con selector {selector}: {e}")
+                    continue
+            
+            # ESTRATEGIA ESPECÍFICA: Sabemos que hay un iframe DialogFrame en #dialog-content
+            logger.info("Intentando acceso directo al iframe DialogFrame...")
+            js_iframe_commands = [
+                # Acceder al iframe DialogFrame específicamente
                 """
-                const forms = document.querySelectorAll('form');
-                forms.forEach(form => {
-                    if (form.action && form.action.includes('export')) {
-                        form.submit();
+                try {
+                    const iframe = document.querySelector('#dialog-content iframe[id="DialogFrame"]') || document.querySelector('iframe[id="DialogFrame"]');
+                    if (iframe && iframe.contentDocument) {
+                        const doc = iframe.contentDocument;
+                        const btn = doc.querySelector('input[value*="Descargar"]') || doc.querySelector('input[type="button"]') || doc.querySelector('button');
+                        if (btn) { btn.click(); console.log('Clicked iframe button:', btn.value || btn.textContent); }
                     }
-                });
+                } catch(e) { console.log('Error accessing iframe:', e); }
                 """,
                 
-                # Buscar en todos los iframes disponibles
+                # Intentar con contentWindow
                 """
-                const iframes = document.querySelectorAll('iframe');
-                iframes.forEach(iframe => {
-                    try {
-                        const doc = iframe.contentDocument || iframe.contentWindow.document;
-                        const downloadBtn = doc.querySelector('input[value*="Descargar"]') ||
-                                          doc.querySelector('button') ||
-                                          doc.querySelector('input[type="button"]');
-                        if (downloadBtn) downloadBtn.click();
-                    } catch(e) {}
-                });
-                """,
-                
-                # Trigger eventos de descarga
-                """
-                window.dispatchEvent(new Event('download'));
-                document.dispatchEvent(new Event('export'));
+                try {
+                    const iframe = document.querySelector('#dialog-content iframe[id="DialogFrame"]') || document.querySelector('iframe[id="DialogFrame"]');
+                    if (iframe && iframe.contentWindow) {
+                        const doc = iframe.contentWindow.document;
+                        const btn = doc.querySelector('input[value*="Descargar"]') || doc.querySelector('input[type="button"]') || doc.querySelector('button');
+                        if (btn) { btn.click(); console.log('Clicked iframe button via contentWindow:', btn.value || btn.textContent); }
+                    }
+                } catch(e) { console.log('Error accessing iframe via contentWindow:', e); }
                 """
             ]
             
-            for i, js_code in enumerate(js_strategies):
+            for i, js_cmd in enumerate(js_iframe_commands):
                 try:
-                    logger.info(f"Ejecutando estrategia JavaScript {i+1}")
+                    logger.info(f"Ejecutando comando iframe JavaScript {i+1}/2")
                     
                     async with self.page.expect_download(timeout=10000) as download_info:
-                        await self.page.evaluate(js_code)
-                        await asyncio.sleep(2)
+                        await self.page.evaluate(js_cmd)
+                        await asyncio.sleep(3)
                         
                         download = await download_info.value
-                        logger.info(f"Descarga exitosa con JavaScript estrategia {i+1}!")
+                        logger.info(f"¡Descarga exitosa con comando iframe JavaScript {i+1}!")
                         return await self.save_download(download, dataset_name)
                         
                 except Exception as e:
-                    logger.debug(f"Error con estrategia JS {i+1}: {e}")
+                    logger.debug(f"Error comando iframe JavaScript {i+1}: {e}")
+                    continue
+            
+            # Si no funcionaron los comandos específicos del iframe, intentar JavaScript directo
+            logger.info("Intentando JavaScript directo como último recurso...")
+            js_commands = [
+                "document.querySelector('input[value=\"Descargar\"]')?.click()",
+                "document.querySelector('button').click()", 
+                "[...document.querySelectorAll('input')].find(el => el.value && el.value.includes('Descargar'))?.click()",
+                "[...document.querySelectorAll('button')].find(el => el.textContent && el.textContent.includes('Descargar'))?.click()"
+            ]
+            
+            for i, js_cmd in enumerate(js_commands):
+                try:
+                    logger.info(f"Ejecutando JavaScript directo {i+1}/4: {js_cmd}")
+                    
+                    async with self.page.expect_download(timeout=8000) as download_info:
+                        await self.page.evaluate(js_cmd)
+                        await asyncio.sleep(2)
+                        
+                        download = await download_info.value
+                        logger.info(f"¡Descarga exitosa con JavaScript directo {i+1}!")
+                        return await self.save_download(download, dataset_name)
+                        
+                except Exception as e:
+                    logger.debug(f"Error JavaScript directo {i+1}: {e}")
                     continue
                     
         except Exception as e:
             logger.error(f"Error en estrategias JavaScript: {e}")
         
+        logger.warning("No se pudo encontrar o hacer click en el botón Descargar")
         return None
     
     async def force_close_all_modals(self):
@@ -714,19 +889,33 @@ class INEScraper:
         """Hacer scraping de un módulo completo"""
         module_info = MODULES_TO_SCRAPE[module_key]
         module_name = module_info["name"]
-        datasets = module_info["datasets"]
+        configured_datasets = module_info["datasets"]
         
         logger.info(f"Iniciando scraping del módulo: {module_name}")
         downloaded_files = []
         
         try:
-            # Expandir el módulo
-            if not await self.expand_module_section(module_name):
-                logger.error(f"No se pudo expandir el módulo: {module_name}")
-                return downloaded_files
+            # Determinar qué datasets usar
+            datasets_to_process = configured_datasets
+            
+            # Si la configuración está vacía, descubrir datasets automáticamente
+            if not configured_datasets:
+                logger.info(f"Configuración de datasets vacía para {module_name}, descubriendo automáticamente...")
+                datasets_to_process = await self.discover_available_datasets(module_name)
+                
+                if not datasets_to_process:
+                    logger.warning(f"No se encontraron datasets para el módulo: {module_name}")
+                    return downloaded_files
+                
+                logger.info(f"Se descubrieron {len(datasets_to_process)} datasets automáticamente")
+            else:
+                # Expandir el módulo para datasets configurados
+                if not await self.expand_module_section(module_name):
+                    logger.error(f"No se pudo expandir el módulo: {module_name}")
+                    return downloaded_files
             
             # Procesar cada dataset
-            for dataset in datasets:
+            for dataset in datasets_to_process:
                 logger.info(f"Procesando dataset: {dataset}")
                 
                 try:
@@ -792,8 +981,14 @@ class INEScraper:
         total_files = 0
         for module, files in downloads.items():
             module_info = MODULES_TO_SCRAPE[module]
+            configured_datasets = module_info["datasets"]
+            
+            # Indicar si se usó auto-descubrimiento
+            discovery_mode = "AUTO-DESCUBRIMIENTO" if not configured_datasets else "CONFIGURACIÓN PREDEFINIDA"
+            
             report_lines.extend([
                 f"Módulo: {module_info['name']}",
+                f"Modo: {discovery_mode}",
                 f"Archivos descargados: {len(files)}",
                 ""
             ])

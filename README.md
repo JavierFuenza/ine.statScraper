@@ -50,21 +50,6 @@ uv run python main.py [opciones]
 
 ---
 
-## Ejemplo de uso
-
-- **Modo normal (headless por defecto):**
-  ```bash
-  python main.py
-  ```
-
-- **Modo debug (navegador visible):**
-  ```bash
-  python main.py --debug
-  # o
-  python main.py -d
-  ```
-
----
 
 ## Notas
 

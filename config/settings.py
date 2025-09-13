@@ -41,29 +41,45 @@ BROWSER_CONFIG = {
 }
 
 # Módulos objetivo (nombres exactos del HTML)
+# NOTA: Para habilitar el auto-descubrimiento de datasets, deja la lista "datasets" vacía: []
+# El scraper automáticamente encontrará y descargará todos los datasets disponibles en el módulo
+
+# Configuración original con datasets predefinidos (comentada):
+# MODULES_TO_SCRAPE = {
+#     "aire": {
+#         "name": "Módulo VBA- Estado - Aire",
+#         "datasets": [
+#             "Temperatura máxima absoluta",
+#             "Temperatura mínima absoluta", 
+#             "Temperatura media",
+#             "Humedad relativa media mensual",
+#             "Radiación global media",
+#             "Índice UV-B promedio",
+#             "Concentración de Material Particulado fino respirable (MP2,5) media mensual"
+#         ]
+#     },
+#     "agua": {
+#         "name": "Módulo VBA- Estado- Agua",
+#         "datasets": [
+#             "Caudal medio de aguas corrientes",
+#             "Volumen del embalse, según embalse",
+#             "Nivel estático de aguas subterráneas",
+#             "Cantidad de agua caída",
+#             "Temperatura superficial del mar",
+#             "Nivel medio del mar"
+#         ]
+#     }
+# }
+
+# Configuración para auto-descubrimiento (ACTIVA):
 MODULES_TO_SCRAPE = {
     "aire": {
         "name": "Módulo VBA- Estado - Aire",
-        "datasets": [
-            "Temperatura máxima absoluta",
-            "Temperatura mínima absoluta", 
-            "Temperatura media",
-            "Humedad relativa media mensual",
-            "Radiación global media",
-            "Índice UV-B promedio",
-            "Concentración de Material Particulado fino respirable (MP2,5) media mensual"
-        ]
+        "datasets": []  # Lista vacía = auto-descubrimiento
     },
     "agua": {
         "name": "Módulo VBA- Estado- Agua",
-        "datasets": [
-            "Caudal medio de aguas corrientes",
-            "Volumen del embalse, según embalse",
-            "Nivel estático de aguas subterráneas",
-            "Cantidad de agua caída",
-            "Temperatura superficial del mar",
-            "Nivel medio del mar"
-        ]
+        "datasets": []  # Lista vacía = auto-descubrimiento
     }
 }
 
