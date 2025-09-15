@@ -90,3 +90,18 @@ LOG_CONFIG = {
     "rotation": "1 MB",
     "retention": "1 week"
 }
+
+# Direccion por defecto para las funciones de ops para countfiles, missingfiles, standarize y loadtodatabase
+DEFECT_DIR_PATH = "data/downloads/20250914_230910"
+
+# --- Carga de variables de entorno (.env) ---
+from dotenv import load_dotenv
+load_dotenv()  # busca .env en el cwd o padres
+
+# URL de conexión a PostgreSQL (incluye driver: postgresql+psycopg2://...)
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+
+if not DATABASE_URL:
+    # No lanzamos excepción aquí para no romper otras utilidades;
+    # el módulo de carga validará y dará un mensaje claro si falta.
+    pass
